@@ -1,7 +1,13 @@
 # 2D-binning_omron
-二维装箱问题的python实现，多线程实时显示
+二维装箱问题的python实现，双线程实时显示计算结果
 
-
+**Quick Start**
+```
+\程序\boxUI\start.exe
+物料坐标输入：“\input.csv”
+确定
+开始
+```
 
 输入数据格式：
 
