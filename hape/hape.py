@@ -3,8 +3,10 @@
 import time
 import copy
 import threading
+import numpy as np
 from math import cos, sin, pi
-
+# from shapely.geometry import geo, polygon
+# from shapely.geos import pointer
 
 class pack_1D():
     def getBestRect(self, blank, rects):
@@ -102,13 +104,12 @@ class Calculator(threading.Thread, pack_1D):
         简历40×50网格
         :return:
         '''
-        for i in range(self.gridX * self.gridScale + 1):
-            for j in range(self.gridY * self.gridScale + 1):
-                xy = str(i) + '-' + str(j)
-                if i == 0 or i == self.gridX * self.gridScale or j == 0 or j == self.gridY * self.gridScale:
-                    self.grids[xy] = 0.5
-                else:
-                    self.grids[xy] = 0
+        k = np.zeros((self.gridX * self.gridScale + 1) * (self.gridY * self.gridScale + 1)).reshape([self.gridX * self.gridScale + 1, self.gridY * self.gridScale + 1])
+        k[0] = 0.5
+        k[-1] = 0.5
+        k.T[0] = 0.5
+        k.T[-1] = 0.5
+        self.grids = k
 
     def calculating(self):
         '''
@@ -117,79 +118,84 @@ class Calculator(threading.Thread, pack_1D):
         '''
         print('开始计算')
 
-        x_coor = list(range(self.gridX * self.gridScale + 1))  # x坐标列表:[0, 1, ...40] 共41个
-        y_coor = list(range(self.gridY * self.gridScale + 1))  # y坐标列表:[0, 1, ...50] 共50个
-
-        # a_couple = []
-        # for virTri in self.virticalTris:    # [[s, num, gender, [[], [], [], []]], ..]
-        #     graph = virTri[3]
-        #     l0 =
-        #
-        #     for the_same in self.virticalTris:
-        #         new_graph = the_same[3]
-        #         if new_graph == graph:
-        #             a_couple.append(the_same)
-        #     if len(a_couple) == 1:  # 只有一个相同的
-        #         a_couple.clear()
-        #         continue
-        #
-        #     for k in a_couple:
-        #         print('相同的', k)
-        #     # <<<<<将最长边相等的两个直角三角形组合成一个四边形优先排布
-        #
-        #     graph = virTri[3]
-
         # ====================优先排矩形====================
+        self.place_rect()
+        print(self.settledPoints)
+        # ====================优先排矩形====================
+
+        # ====================排三角形====================
+        y_max = 0
+        for graphs in self.tris:   # [[s, num, gender, [[], [], [], []]], ..]
+            chosenOne = self.getBestPos(graphs[0], graphs[1], graphs[2], graphs[3], mode=1)
+
+            self.__flag.wait()  # 暂停
+            if self.stopFlag:  # 终止循环
+                return False
+            print('保存图形', chosenOne)    # [Yc, y_max, Xc, gender, location, num, s]
+            self.refreshData(chosenOne, save=True)
+            y_max = self.saveData(chosenOne)
+        print(self.settledPoints)
+        # ====================排三角形====================
+
+        # ====================回溯====================
+        self.backtrace(y_max)
+        # ====================回溯====================
+        self.optpoints.clear()
+        for i in self.bestChoice:
+            self.refreshData(i, save=True)
+        self.settledPoints = self.bestChoice
+        return True
+    
+    def place_rect(self):
         self.rects.sort(reverse=True)
-        rects = copy.deepcopy(self.rects)   # [[s, num, gender, [[], [], [], []]], ..]
-        for ycoor in y_coor:
-            y = ycoor / self.gridScale  # x坐标
-            if not rects:   # 没有矩形排
+        rects = copy.deepcopy(self.rects)  # [[s, num, gender, [[], [], [], []]], ..]
+        print('rects', rects)
+        gridScale = self.gridScale
+        _xcoor = list(range(self.gridX * gridScale + 1))  # x坐标列表:[0, 1, ...40] 共41个
+        _ycoor = list(range(self.gridY * gridScale + 1))  # y坐标列表:[0, 1, ...50] 共50个
+        for ycoor in _ycoor:
+            y = ycoor / gridScale  # y坐标
+            if not rects:  # 没有矩形排
                 break
-
             end = -1
-            for xcoor in x_coor:
-                x = xcoor / self.gridScale  # x坐标
-
+            for xcoor in _xcoor:
+                x = xcoor / gridScale  # x坐标
                 if xcoor <= end:
                     continue
-
-                blank = -1 / self.gridScale  # 凹陷区域要减去1,同时也要加上比例
-
-                grid = str(xcoor) + '-' + str(ycoor)
-                if self.grids[grid] == 1:
+                blank = -1 / gridScale  # 凹陷区域要减去1,同时也要加上比例
+                if self.grids[xcoor, ycoor] == 1:
                     continue
 
+                # 空白区域
                 start = xcoor
                 cursor = xcoor
-                for cursor in range(xcoor, self.gridX * self.gridScale + 1):
-                    grid = str(cursor) + '-' + str(ycoor)
-                    if self.grids[grid] < 1:
-                        blank += 1 / self.gridScale
+                for cursor in range(xcoor, self.gridX * gridScale + 1):
+                    if self.grids[cursor, ycoor] < 1:
+                        blank += 1 / gridScale
                     else:
                         break
                 end = cursor
-                print('-----起点x', start/ self.gridScale, '-----终点x', end/ self.gridScale, 'y', y)
+                print('-----起点x', start / gridScale, '-----终点x', end / gridScale, 'y', y)
 
-                answer = self.getBestRect(blank, rects) # {num:长或宽, ...}
+                answer = self.getBestRect(blank, rects)  # {num:长或宽, ...}
                 print('answer:', answer)
 
                 for num, key in answer.items():
                     print('num:', num, ' key:', key)
                     rect = None
                     new_graph = None
-                    print(rects)
                     for rect in rects:  # [[s, num, gender, [[], [], [], []]], ..]
                         if rect[1] != num:
                             continue
+                        # 把矩形移到x，y处
                         graph = rect[3]
                         l = graph[2][0] - graph[0][0]
                         h = graph[2][1] - graph[0][1]
-                        if l == key:
+                        if l == key:    # 横着放
                             new_graph = [[x, y], [l + x, y],
                                          [l + x, h + y], [x, h + y]
                                          ]
-                        else:
+                        else:   # 竖着放
                             new_graph = [[x, y], [h + x, y],
                                          [h + x, l + y], [x, l + y]
                                          ]
@@ -200,41 +206,21 @@ class Calculator(threading.Thread, pack_1D):
                         return False
 
                     Xc, Yc, y_max = self.caculateCenter(0, new_graph)  # 旋转后的形心
-                    self.refreshData([Yc, y_max, Xc, 0, new_graph, num, rect[0]], save=True)   # [[Yc, y_max, Xc, gender, location, num, s],..]
+                    self.refreshData([Yc, y_max, Xc, 0, new_graph, num, rect[0]],
+                                     save=True)  # [[Yc, y_max, Xc, gender, location, num, s],..]
                     self.saveData([Yc, y_max, Xc, 0, new_graph, num, rect[0]])
-
                     x += key
                     rects.remove(rect)
-        # ====================优先排矩形====================
-
-        # ====================排三角形====================
-        y_max = 0
-        for graphs in self.tris:   # [[s, num, gender, [[], [], [], []]], ..]
-            s = graphs[0]
-            num = graphs[1]
-            gender = graphs[2]
-            thisGrapf = graphs[3]
-
-            chosenOne = self.getBestPos(s, num, gender, thisGrapf, mode=1)
-
-            self.__flag.wait()  # 暂停
-            if self.stopFlag:  # 终止循环
-                return False
-
-            print('保存图形', chosenOne)    # [Yc, y_max, Xc, gender, location, num, s]
-            self.refreshData(chosenOne, save=True)
-            y_max = self.saveData(chosenOne)
-        # ====================排三角形====================
-
-        # ====================回溯====================
+    
+    def backtrace(self, y_max):
         print('~~~~~~ok')
         self.y_max = y_max
         self.bestChoice = copy.deepcopy(self.settledPoints)
         # 开始回溯
         overFlow = 1
-        stopLine = self.y_max    # 停止回溯
-        while stopLine > self.y_full:   # 如果删除后的最高线比100线低则退出
-            highLevel = self.y_list[0:overFlow]     # y_list:[[y_max, num], [], []..]
+        stopLine = self.y_max  # 停止回溯
+        while stopLine > self.y_full:  # 如果删除后的最高线比100线低则退出
+            highLevel = self.y_list[0:overFlow]  # y_list:[[y_max, num], [], []..]
             # 按高度顺序取出此次回溯的图形
             graphs = []  # [[Yc, y_max, Xc, gender, location, num, s], ..]
             for i in highLevel:
@@ -253,10 +239,13 @@ class Calculator(threading.Thread, pack_1D):
             stopLine = y_max
 
             # 按面积重新排
-            graphs.sort(key=lambda x: x[-1], reverse=True)   # 按面积
-            for graph in graphs:    # 直接排是按graphs里面的从高到底排   # [[Yc, y_max, Xc, gender, location, num, s], ..]
-
-                chosenOne = self.getBestPos(graph[6], graph[5], graph[3], graph[4], mode=2)
+            graphs.sort(key=lambda x: x[-1], reverse=True)  # 按面积
+            for graph in graphs:  # 直接排是按graphs里面的从高到底排   # [[Yc, y_max, Xc, gender, location, num, s], ..]
+                s = graph[6]
+                num = graph[5]
+                gender = graph[3]
+                location = graph[4]
+                chosenOne = self.getBestPos(s, num, gender, location, mode=2)
 
                 self.__flag.wait()  # 暂停
                 if self.stopFlag:  # 终止循环
@@ -277,7 +266,6 @@ class Calculator(threading.Thread, pack_1D):
                     for graph_ in self.settledPoints:
                         self.refreshData(graph_, save=True)
                     break
-
             # 找到更好的姿态
             if y_max < self.y_max:
                 self.y_max = y_max
@@ -286,14 +274,6 @@ class Calculator(threading.Thread, pack_1D):
                 print('找到一次更好的:', self.y_max, self.y_list[0:overFlow], end='\n')
 
             overFlow += 2  # 取的图形往下深1
-        # ====================回溯====================
-
-        self.optpoints.clear()
-        for i in self.bestChoice:
-            self.refreshData(i, save=True)
-        self.settledPoints = self.bestChoice
-
-        return True
 
     def getBestPos(self, s, num, gender, thisGraph, mode=1):
 
@@ -307,16 +287,15 @@ class Calculator(threading.Thread, pack_1D):
 
             for ycoor in y_coor:
                 y = ycoor / self.gridScale  # y坐标
-                grid = str(xcoor) + '-' + str(ycoor)
 
-                # # 在小图新较多的情况下提升才显著,但是不但全
+                # # 在小图新较多的情况下效率提升才显著,但是不但全
                 # if y > Y_level:
                 #     # print('-----------------', '该栅格超限', x, '-', y, '该栅格超限', '------------------')
                 #     break
                 if lock == x:
                     # print('-----------------', '该列已锁定', x, '-', y, '该列已锁定', '------------------')
                     break
-                if self.grids[grid] == 1:  # 该栅格已被使用, 上去一个
+                if self.grids[xcoor, ycoor] == 1:  # 该栅格已被使用, 上去一个
                     # print('-----------------', '该栅格已被使用', x, '-', y, '该栅格已被使用', '------------------')
                     continue
 
@@ -340,7 +319,6 @@ class Calculator(threading.Thread, pack_1D):
 
                     # 计算睡眠时间
                     time.sleep(self.sleepTime)
-
                     # 旋转执行刻度
                     for scale in range(self.roundScale + 1):
 
@@ -651,6 +629,7 @@ class Calculator(threading.Thread, pack_1D):
 
         return False    # 检查中没有发现重叠的情况
 
+    #使用shapely
     # def judgeCoin_(self, location):
     #     # 判断是否出界
     #     for point in location:
@@ -676,50 +655,47 @@ class Calculator(threading.Thread, pack_1D):
     #             return True # 出现香蕉
     #     return False
 
-    def refreshGrid(self, location, delMode=False):
+    def refreshGrid(self, gender, location, delMode=False):
         '''
         刷新排样点
         将self.grid置1
         :location:需要刷新排样点的区域:[[], [], [], [], [], []...] 需要时按几何顺序排序且封闭
         :return:
         '''
+        gridScale = self.gridScale
 
         if not delMode:
-            for grid in self.grids.keys():
+            for ycoor in range(self.gridY * gridScale + 1):
+                for xcoor in range(self.gridX * gridScale + 1):
+                    y = ycoor / gridScale
+                    x = xcoor / gridScale
+                    exist = self.judgePointInner(x, y, location)
+                    if exist == 1:     # 点在外面
+                        continue
+                    elif exist == 0:    # 在边上
+                        self.grids[xcoor,ycoor] = self.grids[xcoor,ycoor] + 0.5
+                    else:   # 在里面
+                        self.grids[xcoor,ycoor] = 1
 
-                x = int(grid.split('-')[0]) / self.gridScale  # 排样点x     # int四舍五入
-                y = int(grid.split('-')[1]) / self.gridScale  # 排样点y
-
-                exist = self.judgePointInner(x, y, location)
-
-                if exist == 1:     # 点在外面
-                    continue
-                elif exist == 0:    # 在边上
-                    self.grids[grid] = self.grids[grid] + 0.5
-                else:   # 在里面
-                    self.grids[grid] = 1
-
-                for point in location:
-                    pointGrid = str(int(point[0]) * self.gridScale) + '-' + str(int(point[1]) * self.gridScale)     # int四舍五入
-                    self.grids[pointGrid] = 0
+                    for point in location:
+                        self.grids[int(point[0]) * gridScale, int(point[1]) * gridScale] = 0.5
         else:
-            for grid in self.grids.keys():
+            for ycoor in range(self.gridY * gridScale + 1):
+                for xcoor in range(self.gridX * gridScale + 1):
+                    y = ycoor / gridScale
+                    x = xcoor / gridScale
 
-                x = int(grid.split('-')[0]) / self.gridScale  # 排样点x
-                y = int(grid.split('-')[1]) / self.gridScale  # 排样点y     # int四舍五入
+                    exist = self.judgePointInner(x, y, location)
 
-                exist = self.judgePointInner(x, y, location)
+                    if exist == 1:  # 点在外面
+                        continue
+                    elif exist == 0:  # 在边上
+                        self.grids[xcoor, ycoor] = self.grids[xcoor, ycoor] - 0.5
+                    else:  # 在里面
+                        self.grids[xcoor, ycoor] = 0
 
-                if exist == 1:  # 点在外面
-                    continue
-                elif exist == 0:  # 在边上
-                    self.grids[grid] = self.grids[grid] - 0.5
-                else:  # 在里面
-                    self.grids[grid] = 0
-
-                for point in location:
-                    pointGrid = str(int(point[0]) * self.gridScale) + '-' + str(int(point[1]) * self.gridScale)
-                    self.grids[pointGrid] = 0
+                    for point in location:
+                        self.grids[int(point[0]) * gridScale, int(point[1]) * gridScale] = 0.5
 
     def refreshData(self, chosenOne, save=False, delMode=False):
         '''
@@ -759,28 +735,23 @@ class Calculator(threading.Thread, pack_1D):
         '''
         location = chosenOne[4]
         num = chosenOne[5]
+        gender = chosenOne[3]
 
         y_max = max(location, key=lambda x: x[1])
         if not delMode:
             # 保存图形
             self.settledPoints.append(chosenOne)    # settledPoints:[[Yc, y_max, Xc, gender, location, num, s], ..]
-
             # 保存最高线
             self.y_list.append([y_max[1], num])  # y_max列表：[[y_max, num], [], []..]
-
             # 刷新栅格
-            self.refreshGrid(location)
-            # print('settledPoints =', self.settledPoints)
-            # print('y_list', self.y_list)
-            # print('')
-
+            self.refreshGrid(gender, location)
         else:
             # 删除图形
             self.settledPoints.remove(chosenOne)
             # 删除最高线
             self.y_list.remove([y_max[1], num])
 
-            self.refreshGrid(location, delMode=True)
+            self.refreshGrid(gender, location, delMode=True)
 
         self.y_list.sort(reverse=True)
         return self.y_list[0][0]    # 返回y_max
@@ -833,7 +804,7 @@ class Calculator(threading.Thread, pack_1D):
             gender = graph[1]   # 图形性别
             location = graph[2] # 图形坐标
             s = self.getThisArea(location)  # 图形面积
-            S = S + s
+            S += s
             self.iptpoints.append([s, num, gender, location])
 
             if gender == 0:
@@ -876,7 +847,7 @@ class Calculator(threading.Thread, pack_1D):
         self.y_list.clear()
         self.tris.clear()
         self.rects.clear()
-        self.grids.clear()
+        self.grids = np
         self.settledPoints.clear()
 
         self.__globalFlag.clear()   # 锁定计算器
